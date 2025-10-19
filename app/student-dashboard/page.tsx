@@ -17,8 +17,6 @@ export default function StudentDashboard() {
   const router = useRouter()
   const { toast } = useToast()
 
-  const [studentMood, setStudentMood] = useState<number | null>(null)
-  const [studentMessage, setStudentMessage] = useState<string>("")
   const [teacherCode, setTeacherCode] = useState<string | null>(null)
 
   // 🚪 Redirect if not student
@@ -28,22 +26,26 @@ export default function StudentDashboard() {
     }
   }, [role, loading, router])
 
-  // 🪄 Fetch teacher code from student profile
+  // 🪄 Fetch teacher code from students table
   useEffect(() => {
     if (user) {
       supabase
-        .from("profiles")
+        .from("students")
         .select("teacher_code")
         .eq("id", user.id)
         .single()
         .then(({ data, error }) => {
           if (error) console.error("❌ Failed to fetch teacher code:", error)
-          if (data?.teacher_code) setTeacherCode(data.teacher_code)
+          if (data?.teacher_code) {
+            setTeacherCode(data.teacher_code)
+          } else {
+            console.warn("⚠️ No teacher code found for this student")
+          }
         })
     }
   }, [user])
 
-  // 🧠 Risk classifier
+  // 🧠 AI Risk classifier
   async function classifyMessageRisk(message: string) {
     try {
       const res = await fetch("/api/classify-message", {
@@ -58,7 +60,7 @@ export default function StudentDashboard() {
       }
 
       const data = await res.json()
-      return (data.risk || "low_risk").trim().toLowerCase().replace(/\s+/g, "_")
+      return (data.risk || "low_risk").trim().toLowerCase()
     } catch (err) {
       console.error("❌ classify-message fetch failed:", err)
       return "low_risk"
@@ -96,8 +98,6 @@ export default function StudentDashboard() {
   // 📝 Handle mood submission
   const handleMoodSubmit = async (mood: number, message: string) => {
     console.log("📝 handleMoodSubmit triggered", { mood, message })
-    setStudentMood(mood)
-    setStudentMessage(message)
 
     // Try saving feedback but don't block redirect if it fails
     if (teacherId) {
@@ -115,14 +115,13 @@ export default function StudentDashboard() {
 
     // Classify risk
     const risk = await classifyMessageRisk(message)
-    const normalizedRisk = risk.toLowerCase()
-    console.log("🚨 Risk level:", normalizedRisk)
+    console.log("🚨 Risk level:", risk)
 
     // 🚨 High / Medium risk: notify + redirect to support
-    if (mood === 1 || normalizedRisk.includes("high") || normalizedRisk.includes("medium")) {
-      console.log("🚨 Redirecting to support page with risk:", normalizedRisk)
-      notifyTeacher(normalizedRisk, message).catch(console.error)
-      router.push(`/support-page-inner?risk=${normalizedRisk}`)
+    if (risk === "high_risk" || risk === "medium_risk" || mood === 1) {
+      console.log("🚨 Redirecting to support page with risk:", risk)
+      await notifyTeacher(risk, message)
+      router.push(`/support-page-inner?risk=${risk}`)
       return
     }
 
