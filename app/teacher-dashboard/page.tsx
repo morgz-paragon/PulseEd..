@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Header } from "@/components/header"
 import { AnalyticsCard } from "@/components/analytics-card"
 import { MoodChart } from "@/components/mood-chart"
-import { Users, MessageSquare, TrendingUp, Sparkles, History } from "lucide-react"
+import { Users, MessageSquare, TrendingUp, Sparkles, History, Copy } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -195,6 +195,13 @@ export default function PulseEdTeacherDashboard() {
     toast({ title: "All current feedback archived and dashboard reset." })
   }
 
+  const copyCode = async () => {
+    if (teacherId) {
+      await navigator.clipboard.writeText(teacherId)
+      toast({ title: "✅ Teacher code copied to clipboard" })
+    }
+  }
+
   if (loading || loadingData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -225,9 +232,24 @@ export default function PulseEdTeacherDashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header title="PulseEd — Teacher Dashboard" subtitle="Student wellbeing insights and analytics" />
+      <Header
+        title="PulseEd — Teacher Dashboard"
+        subtitle="Student wellbeing insights and analytics"
+      />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
+        {/* 🧑‍🏫 Teacher Code Section */}
+        <div className="bg-muted p-4 rounded-lg flex items-center justify-between">
+          <div>
+            <p className="text-sm text-muted-foreground">Your Teacher Code</p>
+            <p className="text-xl font-bold">{teacherId}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={copyCode}>
+            <Copy className="h-4 w-4 mr-2" />
+            Copy
+          </Button>
+        </div>
+
         {/* RESET BUTTON */}
         <div className="flex justify-end">
           <Button
@@ -257,7 +279,6 @@ export default function PulseEdTeacherDashboard() {
                 <DialogTitle>📜 Emotional Trends & History</DialogTitle>
               </DialogHeader>
 
-              {/* 📈 Trend Chart */}
               {trendData.length > 0 && (
                 <ResponsiveContainer width="100%" height={250}>
                   <BarChart data={trendData}>
@@ -280,7 +301,6 @@ export default function PulseEdTeacherDashboard() {
                 </ResponsiveContainer>
               )}
 
-              {/* 🃏 History Cards */}
               <div className="max-h-[400px] overflow-y-auto space-y-4 mt-4">
                 {loadingHistory ? (
                   <p className="text-center text-muted-foreground py-4">Loading...</p>
