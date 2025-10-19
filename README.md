@@ -18,14 +18,6 @@ A Next.js application that helps teachers track student wellbeing through anonym
 
 ### Database Setup
 
-The app requires three tables in Supabase. Run the SQL scripts in order:
-
-1. **Create Tables** (`scripts/001_create_tables.sql`)
-2. **Enable RLS** (`scripts/002_enable_rls.sql`)
-
-To run these scripts:
-- Click the "Run" button next to each script file in v0
-- Or copy the SQL and run it in your Supabase SQL Editor
 
 ### Environment Variables
 
@@ -92,6 +84,3 @@ Open [http://localhost:3000](http://localhost:3000) to see the app.
 - **Charts**: Recharts
 - **Deployment**: Vercel
 
-## License
-
-MIT
