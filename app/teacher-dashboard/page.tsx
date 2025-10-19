@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Header } from "@/components/header"
 import { AnalyticsCard } from "@/components/analytics-card"
 import { MoodChart } from "@/components/mood-chart"
-import { Users, MessageSquare, TrendingUp, Sparkles, History, Copy } from "lucide-react"
+import { Users, MessageSquare, TrendingUp, Sparkles, History, Copy, Bell } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -34,6 +34,9 @@ interface HistoryDay {
 export default function PulseEdTeacherDashboard() {
   const { role, loading, teacherId } = useAuth()
   const router = useRouter()
+  const supabase = createClient()
+  const { toast } = useToast()
+
   const [feedback, setFeedback] = useState<Feedback[]>([])
   const [historyDays, setHistoryDays] = useState<HistoryDay[]>([])
   const [trendData, setTrendData] = useState<any[]>([])
@@ -41,14 +44,13 @@ export default function PulseEdTeacherDashboard() {
   const [loadingData, setLoadingData] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [teacherCode, setTeacherCode] = useState<string | null>(null)
-  const supabase = createClient()
-  const { toast } = useToast()
+
+  // 📨 Notifications
+  const [notifications, setNotifications] = useState<any[]>([])
 
   // 🚪 Redirect if not teacher
   useEffect(() => {
-    if (!loading && role !== "teacher") {
-      router.push("/login")
-    }
+    if (!loading && role !== "teacher") router.push("/login")
   }, [role, loading, router])
 
   // 🪄 Fetch Teacher Code
@@ -62,7 +64,6 @@ export default function PulseEdTeacherDashboard() {
       .select("teacher_code")
       .eq("id", teacherId)
       .single()
-
     if (!error && data) setTeacherCode(data.teacher_code)
   }
 
@@ -81,17 +82,11 @@ export default function PulseEdTeacherDashboard() {
       .eq("teacher_id", teacherId)
       .eq("archived", false)
       .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("Fetch feedback error:", error)
-      return
-    }
-
-    setFeedback(data || [])
+    if (!error) setFeedback(data || [])
     setLoadingData(false)
   }
 
-  // 👂 Real-time subscription
+  // 👂 Real-time feedback subscription
   useEffect(() => {
     if (!teacherId || role !== "teacher") return
     fetchFeedback()
@@ -102,17 +97,60 @@ export default function PulseEdTeacherDashboard() {
         "postgres_changes",
         { event: "*", schema: "public", table: "feedback", filter: `teacher_id=eq.${teacherId}` },
         (payload) => {
-          if (!selectedDate && payload.new?.archived === false) {
-            fetchFeedback()
-          }
+          if (!selectedDate && payload.new?.archived === false) fetchFeedback()
         }
       )
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => supabase.removeChannel(channel)
   }, [teacherId, role, selectedDate])
+
+  // 📨 Fetch Notifications
+  async function fetchNotifications() {
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("teacher_id", teacherId)
+      .order("created_at", { ascending: false })
+    if (!error) setNotifications(data || [])
+  }
+
+  async function clearNotifications() {
+    const { error } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("teacher_id", teacherId)
+
+    if (!error) {
+      setNotifications([])
+      toast({ title: "✅ Notifications cleared." })
+    }
+  }
+
+  // 👂 Realtime Notifications
+  useEffect(() => {
+    if (!teacherId) return
+    fetchNotifications()
+
+    const channel = supabase
+      .channel("notifications")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `teacher_id=eq.${teacherId}`,
+        },
+        (payload) => {
+          setNotifications((prev) => [payload.new, ...prev])
+          toast({ title: "🚨 New support message", description: payload.new.message })
+        }
+      )
+      .subscribe()
+
+    return () => supabase.removeChannel(channel)
+  }, [teacherId])
 
   // 🗓️ Fetch history
   const fetchHistory = async () => {
@@ -122,9 +160,7 @@ export default function PulseEdTeacherDashboard() {
       .select("*")
       .eq("teacher_id", teacherId)
       .order("created_at", { ascending: false })
-
     if (error) {
-      console.error("Fetch history error:", error)
       setLoadingHistory(false)
       return
     }
@@ -158,19 +194,10 @@ export default function PulseEdTeacherDashboard() {
     setLoadingHistory(false)
   }
 
-  // 📆 Load data from a specific day
+  // 📆 Load history day
   const loadHistoryDay = async (day: string) => {
     setSelectedDate(day)
-    const { data, error } = await supabase
-      .from("feedback")
-      .select("*")
-      .eq("teacher_id", teacherId)
-
-    if (error) {
-      console.error("Load history day error:", error)
-      return
-    }
-
+    const { data } = await supabase.from("feedback").select("*").eq("teacher_id", teacherId)
     const filtered = (data || []).filter(
       (f) => f.created_at && new Date(f.created_at).toLocaleDateString() === day
     )
@@ -178,32 +205,22 @@ export default function PulseEdTeacherDashboard() {
     toast({ title: `Loaded data from ${day}` })
   }
 
-  // 🧹 Archive all feedback
+  // 🧹 Reset dashboard
   const resetDashboard = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("feedback")
       .select("id")
       .eq("teacher_id", teacherId)
       .eq("archived", false)
 
-    if (error || !data) {
-      console.error("❌ Failed to fetch feedback for reset:", error)
-      return
-    }
-
-    const ids = data.map((f) => f.id)
-    if (ids.length === 0) {
+    if (!data || data.length === 0) {
       toast({ title: "No active feedback to archive." })
       return
     }
 
-    const { error: updateError } = await supabase
-      .from("feedback")
-      .update({ archived: true })
-      .in("id", ids)
-
-    if (updateError) {
-      console.error("❌ Archive error:", updateError)
+    const ids = data.map((f) => f.id)
+    const { error } = await supabase.from("feedback").update({ archived: true }).in("id", ids)
+    if (error) {
       toast({ title: "Failed to archive feedback", variant: "destructive" })
       return
     }
@@ -214,6 +231,7 @@ export default function PulseEdTeacherDashboard() {
     toast({ title: "✅ All current feedback archived and dashboard reset." })
   }
 
+  // 🌀 Loading
   if (loading || loadingData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -247,9 +265,52 @@ export default function PulseEdTeacherDashboard() {
       <Header
         title="PulseEd — Teacher Dashboard"
         subtitle="Student wellbeing insights and analytics"
-        // 📌 Custom action buttons inside header
         actions={
           <div className="flex gap-2">
+            {/* 🔔 Notifications */}
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="relative">
+                  <Bell className="h-4 w-4" />
+                  {notifications.length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                      {notifications.length}
+                    </span>
+                  )}
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>🔔 Notifications</DialogTitle>
+                </DialogHeader>
+                {notifications.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-4">No notifications</p>
+                ) : (
+                  <div className="max-h-[400px] overflow-y-auto space-y-4">
+                    {notifications.map((n) => (
+                      <div key={n.id} className="border-b pb-2">
+                        <p className="font-semibold text-primary">
+                          Risk: {n.risk_level?.replace("_", " ").toUpperCase()}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(n.created_at).toLocaleString()}
+                        </p>
+                        <p className="mt-1 text-sm">{n.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {notifications.length > 0 && (
+                  <div className="flex justify-end pt-4">
+                    <Button variant="destructive" size="sm" onClick={clearNotifications}>
+                      Clear All
+                    </Button>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            {/* 🧹 Archive and Reset */}
             <Button
               variant="destructive"
               size="sm"
@@ -262,6 +323,7 @@ export default function PulseEdTeacherDashboard() {
               Archive All & Reset
             </Button>
 
+            {/* 🕒 History */}
             <Dialog onOpenChange={(open) => open && fetchHistory()}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="flex items-center gap-2">
@@ -316,11 +378,7 @@ export default function PulseEdTeacherDashboard() {
                           </CardDescription>
                         </CardHeader>
                         <CardContent>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => loadHistoryDay(h.date)}
-                          >
+                          <Button variant="outline" size="sm" onClick={() => loadHistoryDay(h.date)}>
                             Load
                           </Button>
                         </CardContent>
@@ -343,12 +401,7 @@ export default function PulseEdTeacherDashboard() {
               {teacherCode ?? "Loading..."}
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={copyCode}
-            disabled={!teacherCode}
-          >
+          <Button variant="outline" size="sm" onClick={copyCode} disabled={!teacherCode}>
             <Copy className="h-4 w-4 mr-2" />
             Copy
           </Button>
@@ -396,9 +449,7 @@ export default function PulseEdTeacherDashboard() {
                 <p className="text-center text-muted-foreground">No feedback yet.</p>
               )}
               {feedback.map((f) => {
-                const isValidDate =
-                  f.created_at && !isNaN(new Date(f.created_at).getTime())
-                const formattedDate = isValidDate
+                const formattedDate = f.created_at
                   ? new Date(f.created_at as string).toLocaleString()
                   : "No timestamp"
 
