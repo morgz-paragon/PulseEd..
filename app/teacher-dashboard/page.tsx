@@ -40,6 +40,7 @@ export default function PulseEdTeacherDashboard() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [loadingData, setLoadingData] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [teacherCode, setTeacherCode] = useState<string | null>(null)
   const supabase = createClient()
   const { toast } = useToast()
 
@@ -49,6 +50,33 @@ export default function PulseEdTeacherDashboard() {
       router.push("/login")
     }
   }, [role, loading, router])
+
+  // 🪄 Fetch Teacher Code
+  useEffect(() => {
+    if (teacherId) fetchTeacherCode()
+  }, [teacherId])
+
+  async function fetchTeacherCode() {
+    const { data, error } = await supabase
+      .from("teachers")
+      .select("teacher_code")
+      .eq("id", teacherId)
+      .single()
+
+    if (error) {
+      console.error("❌ Failed to fetch teacher code:", error)
+      return
+    }
+
+    setTeacherCode(data.teacher_code)
+  }
+
+  const copyCode = async () => {
+    if (teacherCode) {
+      await navigator.clipboard.writeText(teacherCode)
+      toast({ title: "✅ Teacher code copied to clipboard" })
+    }
+  }
 
   // 🔄 Fetch only active (non-archived) feedback
   const fetchFeedback = async () => {
@@ -195,13 +223,6 @@ export default function PulseEdTeacherDashboard() {
     toast({ title: "All current feedback archived and dashboard reset." })
   }
 
-  const copyCode = async () => {
-    if (teacherId) {
-      await navigator.clipboard.writeText(teacherId)
-      toast({ title: "✅ Teacher code copied to clipboard" })
-    }
-  }
-
   if (loading || loadingData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -242,9 +263,16 @@ export default function PulseEdTeacherDashboard() {
         <div className="bg-muted p-4 rounded-lg flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">Your Teacher Code</p>
-            <p className="text-xl font-bold">{teacherId}</p>
+            <p className="text-2xl font-bold tracking-wider">
+              {teacherCode ?? "Loading..."}
+            </p>
           </div>
-          <Button variant="outline" size="sm" onClick={copyCode}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={copyCode}
+            disabled={!teacherCode}
+          >
             <Copy className="h-4 w-4 mr-2" />
             Copy
           </Button>
