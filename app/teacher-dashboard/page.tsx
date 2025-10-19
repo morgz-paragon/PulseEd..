@@ -63,12 +63,7 @@ export default function PulseEdTeacherDashboard() {
       .eq("id", teacherId)
       .single()
 
-    if (error) {
-      console.error("❌ Failed to fetch teacher code:", error)
-      return
-    }
-
-    setTeacherCode(data.teacher_code)
+    if (!error && data) setTeacherCode(data.teacher_code)
   }
 
   const copyCode = async () => {
@@ -78,7 +73,7 @@ export default function PulseEdTeacherDashboard() {
     }
   }
 
-  // 🔄 Fetch only active (non-archived) feedback
+  // 🔄 Fetch active feedback
   const fetchFeedback = async () => {
     const { data, error } = await supabase
       .from("feedback")
@@ -86,7 +81,6 @@ export default function PulseEdTeacherDashboard() {
       .eq("teacher_id", teacherId)
       .eq("archived", false)
       .order("created_at", { ascending: false })
-      .limit(50)
 
     if (error) {
       console.error("Fetch feedback error:", error)
@@ -97,7 +91,7 @@ export default function PulseEdTeacherDashboard() {
     setLoadingData(false)
   }
 
-  // 👂 Real-time subscription with archive filtering
+  // 👂 Real-time subscription
   useEffect(() => {
     if (!teacherId || role !== "teacher") return
     fetchFeedback()
@@ -106,12 +100,7 @@ export default function PulseEdTeacherDashboard() {
       .channel("feedback-changes")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "feedback",
-          filter: `teacher_id=eq.${teacherId}`,
-        },
+        { event: "*", schema: "public", table: "feedback", filter: `teacher_id=eq.${teacherId}` },
         (payload) => {
           if (!selectedDate && payload.new?.archived === false) {
             fetchFeedback()
@@ -125,7 +114,7 @@ export default function PulseEdTeacherDashboard() {
     }
   }, [teacherId, role, selectedDate])
 
-  // 🗓️ Fetch history (archived + active)
+  // 🗓️ Fetch history
   const fetchHistory = async () => {
     setLoadingHistory(true)
     const { data, error } = await supabase
@@ -140,10 +129,8 @@ export default function PulseEdTeacherDashboard() {
       return
     }
 
-    if (!data) return
-
     const grouped: Record<string, Feedback[]> = {}
-    data.forEach((f) => {
+    data?.forEach((f) => {
       if (!f.created_at) return
       const day = new Date(f.created_at).toLocaleDateString()
       grouped[day] = grouped[day] || []
@@ -156,32 +143,22 @@ export default function PulseEdTeacherDashboard() {
         const moodKey = e.mood?.trim() || "Unknown"
         moods[moodKey] = (moods[moodKey] || 0) + 1
       })
-      return {
-        date: day,
-        count: entries.length,
-        moods,
-      }
+      return { date: day, count: entries.length, moods }
     })
 
-    const allMoods = Array.from(
-      new Set(historySummary.flatMap((d) => Object.keys(d.moods)))
-    )
+    const allMoods = Array.from(new Set(historySummary.flatMap((d) => Object.keys(d.moods))))
     const trends = historySummary.map((h) => {
       const base: any = { date: h.date }
-      allMoods.forEach((m) => {
-        base[m] = h.moods[m] || 0
-      })
+      allMoods.forEach((m) => (base[m] = h.moods[m] || 0))
       return base
     })
 
     setTrendData(trends)
-    setHistoryDays(
-      historySummary.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    )
+    setHistoryDays(historySummary.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()))
     setLoadingHistory(false)
   }
 
-  // 📆 Load data from a specific day (archived or not)
+  // 📆 Load data from a specific day
   const loadHistoryDay = async (day: string) => {
     setSelectedDate(day)
     const { data, error } = await supabase
@@ -201,26 +178,40 @@ export default function PulseEdTeacherDashboard() {
     toast({ title: `Loaded data from ${day}` })
   }
 
-  // 🧹 Archive all current feedback on reset
+  // 🧹 Archive all feedback
   const resetDashboard = async () => {
-    if (feedback.length > 0) {
-      const ids = feedback.map((f) => f.id)
-      const { error } = await supabase
-        .from("feedback")
-        .update({ archived: true })
-        .in("id", ids)
+    const { data, error } = await supabase
+      .from("feedback")
+      .select("id")
+      .eq("teacher_id", teacherId)
+      .eq("archived", false)
 
-      if (error) {
-        console.error("Archive error:", error)
-        toast({ title: "Failed to archive feedback", variant: "destructive" })
-        return
-      }
+    if (error || !data) {
+      console.error("❌ Failed to fetch feedback for reset:", error)
+      return
+    }
+
+    const ids = data.map((f) => f.id)
+    if (ids.length === 0) {
+      toast({ title: "No active feedback to archive." })
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from("feedback")
+      .update({ archived: true })
+      .in("id", ids)
+
+    if (updateError) {
+      console.error("❌ Archive error:", updateError)
+      toast({ title: "Failed to archive feedback", variant: "destructive" })
+      return
     }
 
     setSelectedDate(null)
     setFeedback([])
-    await fetchFeedback()
-    toast({ title: "All current feedback archived and dashboard reset." })
+    fetchFeedback()
+    toast({ title: "✅ All current feedback archived and dashboard reset." })
   }
 
   if (loading || loadingData) {
@@ -256,6 +247,91 @@ export default function PulseEdTeacherDashboard() {
       <Header
         title="PulseEd — Teacher Dashboard"
         subtitle="Student wellbeing insights and analytics"
+        // 📌 Custom action buttons inside header
+        actions={
+          <div className="flex gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (confirm("Are you sure you want to archive and reset all current feedback?")) {
+                  resetDashboard()
+                }
+              }}
+            >
+              Archive All & Reset
+            </Button>
+
+            <Dialog onOpenChange={(open) => open && fetchHistory()}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  View History
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-3xl">
+                <DialogHeader>
+                  <DialogTitle>📜 Emotional Trends & History</DialogTitle>
+                </DialogHeader>
+
+                {trendData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      {Object.keys(trendData[0])
+                        .filter((k) => k !== "date")
+                        .map((mood, idx) => (
+                          <Bar
+                            key={mood}
+                            dataKey={mood}
+                            stackId="a"
+                            fill={`hsl(${idx * 60}, 70%, 50%)`}
+                          />
+                        ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+
+                <div className="max-h-[400px] overflow-y-auto space-y-4 mt-4">
+                  {loadingHistory ? (
+                    <p className="text-center text-muted-foreground py-4">Loading...</p>
+                  ) : historyDays.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-4">
+                      No history available yet.
+                    </p>
+                  ) : (
+                    historyDays.map((h) => (
+                      <Card key={h.date} className="border shadow-sm">
+                        <CardHeader>
+                          <CardTitle>{h.date}</CardTitle>
+                          <CardDescription>
+                            {h.count} responses —{" "}
+                            {Object.entries(h.moods)
+                              .map(([m, c]) => `${m} (${c})`)
+                              .join(", ")}
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => loadHistoryDay(h.date)}
+                          >
+                            Load
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ))
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        }
       />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
@@ -278,126 +354,20 @@ export default function PulseEdTeacherDashboard() {
           </Button>
         </div>
 
-        {/* RESET BUTTON */}
-        <div className="flex justify-end">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              if (confirm("Are you sure you want to archive and reset all current feedback?")) {
-                resetDashboard()
-              }
-            }}
-          >
-            Archive All & Reset Panel
-          </Button>
-        </div>
-
-        {/* HISTORY BUTTON */}
-        <div className="flex justify-end">
-          <Dialog onOpenChange={(open) => open && fetchHistory()}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="flex items-center gap-2">
-                <History className="h-4 w-4" />
-                View History
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>📜 Emotional Trends & History</DialogTitle>
-              </DialogHeader>
-
-              {trendData.length > 0 && (
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    {Object.keys(trendData[0])
-                      .filter((k) => k !== "date")
-                      .map((mood, idx) => (
-                        <Bar
-                          key={mood}
-                          dataKey={mood}
-                          stackId="a"
-                          fill={`hsl(${idx * 60}, 70%, 50%)`}
-                        />
-                      ))}
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-
-              <div className="max-h-[400px] overflow-y-auto space-y-4 mt-4">
-                {loadingHistory ? (
-                  <p className="text-center text-muted-foreground py-4">Loading...</p>
-                ) : historyDays.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-4">
-                    No history available yet.
-                  </p>
-                ) : (
-                  historyDays.map((h) => (
-                    <Card key={h.date} className="border shadow-sm">
-                      <CardHeader>
-                        <CardTitle>{h.date}</CardTitle>
-                        <CardDescription>
-                          {h.count} responses —{" "}
-                          {Object.entries(h.moods)
-                            .map(([m, c]) => `${m} (${c})`)
-                            .join(", ")}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => loadHistoryDay(h.date)}
-                        >
-                          Load
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-
-        {/* ANALYTICS */}
+        {/* 📊 Analytics */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <AnalyticsCard
-            title="Total Responses"
-            value={totalResponses}
-            icon={MessageSquare}
-            description="All-time submissions"
-          />
-          <AnalyticsCard
-            title="Active Students"
-            value={uniqueStudents}
-            icon={Users}
-            description="Unique participants"
-          />
-          <AnalyticsCard
-            title="With Messages"
-            value={withMessages}
-            icon={TrendingUp}
-            description="Detailed feedback"
-          />
+          <AnalyticsCard title="Total Responses" value={totalResponses} icon={MessageSquare} description="All-time submissions" />
+          <AnalyticsCard title="Active Students" value={uniqueStudents} icon={Users} description="Unique participants" />
+          <AnalyticsCard title="With Messages" value={withMessages} icon={TrendingUp} description="Detailed feedback" />
           <AnalyticsCard
             title="Engagement"
-            value={
-              totalResponses > 0
-                ? `${Math.round((withMessages / totalResponses) * 100)}%`
-                : "0%"
-            }
+            value={totalResponses > 0 ? `${Math.round((withMessages / totalResponses) * 100)}%` : "0%"}
             icon={Sparkles}
             description="Message rate"
           />
         </div>
 
-        {/* MOOD CHART + FEEDBACK */}
+        {/* 📈 Mood Chart + Feedback */}
         <div className="grid gap-6 lg:grid-cols-2">
           {moodData.length > 0 ? (
             <MoodChart data={moodData} />
@@ -405,16 +375,12 @@ export default function PulseEdTeacherDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle>Mood Distribution</CardTitle>
-                <CardDescription>
-                  Overview of student moods submitted
-                </CardDescription>
+                <CardDescription>Overview of student moods submitted</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="text-center py-12 text-muted-foreground">
                   <p>No mood data available yet.</p>
-                  <p className="text-sm mt-1">
-                    Charts will appear once students start sharing.
-                  </p>
+                  <p className="text-sm mt-1">Charts will appear once students start sharing.</p>
                 </div>
               </CardContent>
             </Card>
@@ -423,15 +389,11 @@ export default function PulseEdTeacherDashboard() {
           <Card>
             <CardHeader>
               <CardTitle>Recent Feedback</CardTitle>
-              <CardDescription>
-                Most recent submissions from your students
-              </CardDescription>
+              <CardDescription>Most recent submissions from your students</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {feedback.length === 0 && (
-                <p className="text-center text-muted-foreground">
-                  No feedback yet.
-                </p>
+                <p className="text-center text-muted-foreground">No feedback yet.</p>
               )}
               {feedback.map((f) => {
                 const isValidDate =
@@ -443,14 +405,8 @@ export default function PulseEdTeacherDashboard() {
                 return (
                   <div key={f.id} className="border-b pb-2">
                     <p className="font-semibold">{f.mood || "Unknown Mood"}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {formattedDate}
-                    </p>
-                    {f.message && (
-                      <p className="text-sm mt-1 text-foreground">
-                        “{f.message}”
-                      </p>
-                    )}
+                    <p className="text-sm text-muted-foreground">{formattedDate}</p>
+                    {f.message && <p className="text-sm mt-1 text-foreground">“{f.message}”</p>}
                   </div>
                 )
               })}

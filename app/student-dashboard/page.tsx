@@ -19,6 +19,7 @@ export default function StudentDashboard() {
 
   const [studentMood, setStudentMood] = useState<number | null>(null)
   const [studentMessage, setStudentMessage] = useState<string>("")
+  const [teacherCode, setTeacherCode] = useState<string | null>(null)
 
   // 🚪 Redirect if not student
   useEffect(() => {
@@ -26,6 +27,21 @@ export default function StudentDashboard() {
       router.push("/login")
     }
   }, [role, loading, router])
+
+  // 🪄 Fetch teacher code from student profile
+  useEffect(() => {
+    if (user) {
+      supabase
+        .from("profiles")
+        .select("teacher_code")
+        .eq("id", user.id)
+        .single()
+        .then(({ data, error }) => {
+          if (error) console.error("❌ Failed to fetch teacher code:", error)
+          if (data?.teacher_code) setTeacherCode(data.teacher_code)
+        })
+    }
+  }, [user])
 
   // 🧠 Risk classifier
   async function classifyMessageRisk(message: string) {
@@ -51,6 +67,34 @@ export default function StudentDashboard() {
     }
   }
 
+  // 📨 Notify teacher on risky messages
+  async function notifyTeacher(riskLevel: string, message: string) {
+    if (!teacherCode) {
+      console.warn("⚠️ No teacher code linked to this student.")
+      return
+    }
+
+    const { data: teacher } = await supabase
+      .from("teachers")
+      .select("id")
+      .eq("teacher_code", teacherCode)
+      .single()
+
+    if (!teacher) {
+      console.warn("⚠️ Teacher not found for code:", teacherCode)
+      return
+    }
+
+    const { error } = await supabase.from("notifications").insert({
+      teacher_id: teacher.id,
+      student_id: user?.id,
+      message,
+      risk_level: riskLevel,
+    })
+
+    if (error) console.error("❌ Failed to notify teacher:", error)
+  }
+
   // 📝 Handle mood submission
   const handleMoodSubmit = async (mood: number, message: string) => {
     console.log("📝 handleMoodSubmit triggered", { mood, message })
@@ -71,15 +115,21 @@ export default function StudentDashboard() {
     const risk = await classifyMessageRisk(message)
     console.log("🚨 Risk level:", risk)
 
-  // 🚪 If risk is high or medium → redirect to support page
-  if (mood === 1 || risk === "high_risk" || risk === "medium_risk") {
-  console.log("🚨 Redirecting to support page with risk:", risk)
-  router.push(`/support-page-inner?risk=${risk}`)
-  return
-}
+    // 🚨 High / Medium risk: notify + redirect to support
+    if (mood === 1 || risk === "high_risk" || risk === "medium_risk") {
+      console.log("🚨 Redirecting to support page with risk:", risk)
 
+      await notifyTeacher(risk, message)
 
-    // Otherwise, show normal toast
+      // ✅ slight timeout helps ensure state updates + insert completes
+      setTimeout(() => {
+        router.push(`/support-page-inner?risk=${risk}`)
+      }, 150)
+
+      return
+    }
+
+    // ✅ Otherwise normal flow
     toast({ title: "✅ Thanks for sharing. Your response has been recorded." })
   }
 
@@ -112,7 +162,9 @@ export default function StudentDashboard() {
                     <Shield className="h-5 w-5 text-accent" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-card-foreground mb-1">Your Privacy Matters</h3>
+                    <h3 className="font-semibold text-card-foreground mb-1">
+                      Your Privacy Matters
+                    </h3>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       All responses are anonymous. Your teacher only sees trends — unless you choose to share your name.
                     </p>
