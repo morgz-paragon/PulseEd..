@@ -45,7 +45,6 @@ export default function StudentDashboard() {
 
   // 🧠 Risk classifier
   async function classifyMessageRisk(message: string) {
-    console.log("📡 classifyMessageRisk sending:", message)
     try {
       const res = await fetch("/api/classify-message", {
         method: "POST",
@@ -59,7 +58,6 @@ export default function StudentDashboard() {
       }
 
       const data = await res.json()
-      console.log("🧠 classify-message response:", data)
       return (data.risk || "low_risk").trim().toLowerCase().replace(/\s+/g, "_")
     } catch (err) {
       console.error("❌ classify-message fetch failed:", err)
@@ -74,13 +72,13 @@ export default function StudentDashboard() {
       return
     }
 
-    const { data: teacher } = await supabase
+    const { data: teacher, error: teacherError } = await supabase
       .from("teachers")
       .select("id")
       .eq("teacher_code", teacherCode)
       .single()
 
-    if (!teacher) {
+    if (teacherError || !teacher) {
       console.warn("⚠️ Teacher not found for code:", teacherCode)
       return
     }
@@ -101,31 +99,30 @@ export default function StudentDashboard() {
     setStudentMood(mood)
     setStudentMessage(message)
 
-    // Save feedback
-    const { error } = await supabase.from("feedback").insert({
-      student_id: user?.id,
-      teacher_id: teacherId,
-      mood,
-      message,
-      archived: false,
-    })
-    if (error) console.error("❌ Failed to insert feedback:", error)
+    // Try saving feedback but don't block redirect if it fails
+    if (teacherId) {
+      const { error } = await supabase.from("feedback").insert({
+        student_id: user?.id,
+        teacher_id: teacherId,
+        mood,
+        message,
+        archived: false,
+      })
+      if (error) console.error("❌ Failed to insert feedback:", error)
+    } else {
+      console.warn("⚠️ No teacherId found. Skipping feedback insert.")
+    }
 
     // Classify risk
     const risk = await classifyMessageRisk(message)
-    console.log("🚨 Risk level:", risk)
+    const normalizedRisk = risk.toLowerCase()
+    console.log("🚨 Risk level:", normalizedRisk)
 
     // 🚨 High / Medium risk: notify + redirect to support
-    if (mood === 1 || risk === "high_risk" || risk === "medium_risk") {
-      console.log("🚨 Redirecting to support page with risk:", risk)
-
-      await notifyTeacher(risk, message)
-
-      // ✅ slight timeout helps ensure state updates + insert completes
-      setTimeout(() => {
-        router.push(`/support-page-inner?risk=${risk}`)
-      }, 150)
-
+    if (mood === 1 || normalizedRisk.includes("high") || normalizedRisk.includes("medium")) {
+      console.log("🚨 Redirecting to support page with risk:", normalizedRisk)
+      notifyTeacher(normalizedRisk, message).catch(console.error)
+      router.push(`/support-page-inner?risk=${normalizedRisk}`)
       return
     }
 

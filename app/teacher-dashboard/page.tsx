@@ -44,8 +44,6 @@ export default function PulseEdTeacherDashboard() {
   const [loadingData, setLoadingData] = useState(true)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [teacherCode, setTeacherCode] = useState<string | null>(null)
-
-  // 📨 Notifications
   const [notifications, setNotifications] = useState<any[]>([])
 
   // 🚪 Redirect if not teacher
@@ -74,7 +72,7 @@ export default function PulseEdTeacherDashboard() {
     }
   }
 
-  // 🔄 Fetch active feedback
+  // 🔄 Fetch active feedback (live dashboard only)
   const fetchFeedback = async () => {
     const { data, error } = await supabase
       .from("feedback")
@@ -152,7 +150,7 @@ export default function PulseEdTeacherDashboard() {
     return () => supabase.removeChannel(channel)
   }, [teacherId])
 
-  // 🗓️ Fetch history
+  // 🗓️ Fetch history (keeps archived)
   const fetchHistory = async () => {
     setLoadingHistory(true)
     const { data, error } = await supabase
@@ -197,7 +195,10 @@ export default function PulseEdTeacherDashboard() {
   // 📆 Load history day
   const loadHistoryDay = async (day: string) => {
     setSelectedDate(day)
-    const { data } = await supabase.from("feedback").select("*").eq("teacher_id", teacherId)
+    const { data } = await supabase
+      .from("feedback")
+      .select("*")
+      .eq("teacher_id", teacherId)
     const filtered = (data || []).filter(
       (f) => f.created_at && new Date(f.created_at).toLocaleDateString() === day
     )
@@ -205,7 +206,7 @@ export default function PulseEdTeacherDashboard() {
     toast({ title: `Loaded data from ${day}` })
   }
 
-  // 🧹 Reset dashboard
+  // 🧹 Reset dashboard (archive all current feedback)
   const resetDashboard = async () => {
     const { data } = await supabase
       .from("feedback")
@@ -227,11 +228,12 @@ export default function PulseEdTeacherDashboard() {
 
     setSelectedDate(null)
     setFeedback([])
+    setTrendData([]) // ✅ clear chart too
     fetchFeedback()
     toast({ title: "✅ All current feedback archived and dashboard reset." })
   }
 
-  // 🌀 Loading
+  // 🌀 Loading state
   if (loading || loadingData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -393,7 +395,7 @@ export default function PulseEdTeacherDashboard() {
       />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
-        {/* 🧑‍🏫 Teacher Code Section */}
+        {/* 🧑‍🏫 Teacher Code */}
         <div className="bg-muted p-4 rounded-lg flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">Your Teacher Code</p>

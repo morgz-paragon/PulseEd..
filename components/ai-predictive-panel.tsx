@@ -1,116 +1,93 @@
 "use client"
 
-import { useState } from "react"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { useEffect, useState } from "react"
+import { createClient } from "@/lib/supabase/client"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { TrendingUp } from "lucide-react"
+import { motion } from "framer-motion"
 
-export function AIPredictivePanel({ teacherId }: { teacherId: string }) {
+interface AIPredictivePanelProps {
+  teacherId: string
+}
+
+export function AIPredictivePanel({ teacherId }: AIPredictivePanelProps) {
+  const supabase = createClient()
   const [prediction, setPrediction] = useState<string>("")
-  const [reason, setReason] = useState<string>("")
-  const [insight, setInsight] = useState<string>("")
-  const [interventions, setInterventions] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
-  const fetchPrediction = async () => {
+  async function fetchPrediction() {
     setLoading(true)
-    setError(null)
-
     try {
-      console.log("📡 Sending teacherId:", teacherId)
+      const { data } = await supabase
+        .from("feedback")
+        .select("mood, created_at")
+        .eq("teacher_id", teacherId)
+        .eq("archived", false)
 
-      // 🧠 Hit prediction API
-      const res = await fetch("/api/predict-trends", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teacherId }),
+      // Simple heuristic: predict based on mood trajectory
+      const moodCounts: Record<string, number> = {}
+      data?.forEach((f) => {
+        if (f.mood) moodCounts[f.mood] = (moodCounts[f.mood] || 0) + 1
       })
 
-      if (!res.ok) {
-        const errData = await res.json()
-        throw new Error(errData.error || "Failed to fetch prediction")
-      }
+      const happy = moodCounts["Happy"] || 0
+      const sad = moodCounts["Sad"] || 0
+      const total = Object.values(moodCounts).reduce((a, b) => a + b, 0)
+      const positivity = total > 0 ? (happy / total) * 100 : 0
+      const negativity = total > 0 ? (sad / total) * 100 : 0
 
-      const data = await res.json()
-      console.log("🛰️ Prediction API Response:", data)
-
-      const parsed = data.prediction || {}
-      setPrediction(parsed.trend || "No trend")
-      setReason(parsed.reason || "No explanation available")
-      setInsight(parsed.insight || "")
-
-      // ✨ Optional: hit interventions API
-      const intRes = await fetch("/api/interventions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trend: parsed.trend }),
-      })
-
-      if (!intRes.ok) {
-        console.warn("⚠️ Interventions API returned non-OK")
-        setInterventions([])
+      let predictionText = "🧭 Emotional forecast for the next few days: "
+      if (negativity > 40) {
+        predictionText += "⚠️ Negative sentiment likely to increase. Consider intervention."
+      } else if (positivity > 60) {
+        predictionText += "🟢 Mood likely to remain positive and stable."
       } else {
-        const intData = await intRes.json()
-        setInterventions(intData.interventions || [])
+        predictionText += "🟡 Mixed mood expected. Keep monitoring trends."
       }
-    } catch (err: any) {
-      console.error("❌ Error fetching prediction:", err)
-      setError(err.message || "Something went wrong")
-      setPrediction("")
-      setReason("")
-      setInsight("")
-      setInterventions([])
+
+      setPrediction(predictionText)
+    } catch (err) {
+      console.error("Prediction error:", err)
     } finally {
       setLoading(false)
     }
   }
 
+  useEffect(() => {
+    fetchPrediction()
+    const channel = supabase
+      .channel("ai-predict-watch")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "feedback", filter: `teacher_id=eq.${teacherId}` },
+        () => fetchPrediction()
+      )
+      .subscribe()
+
+    return () => supabase.removeChannel(channel)
+  }, [teacherId])
+
   return (
     <Card>
-      <CardHeader className="flex justify-between items-center">
-        <CardTitle>📈 AI Emotional Prediction</CardTitle>
-        <button
-          onClick={fetchPrediction}
-          disabled={loading}
-          className="px-3 py-1 bg-primary text-white rounded text-sm disabled:opacity-70"
-        >
-          {loading ? "Analyzing..." : "Run Prediction"}
-        </button>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUp className="h-5 w-5 text-primary" /> Emotional Forecast
+        </CardTitle>
+        <CardDescription>Short-term mood prediction based on trend</CardDescription>
       </CardHeader>
-
       <CardContent>
-        {error && (
-          <p className="text-red-500 font-medium mb-3">
-            ❌ {error}
-          </p>
+        {loading ? (
+          <p className="animate-pulse text-muted-foreground">Analyzing trends...</p>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+            className="text-foreground"
+          >
+            {prediction}
+          </motion.div>
         )}
-
-        {prediction ? (
-          <>
-            <p className="font-semibold text-foreground">🧠 Trend: {prediction}</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              ℹ️ <strong>Why:</strong> {reason}
-            </p>
-            {insight && (
-              <p className="mt-3 text-muted-foreground whitespace-pre-wrap">
-                📝 <strong>Insight:</strong> {insight}
-              </p>
-            )}
-            {interventions.length > 0 && (
-              <div className="mt-3">
-                <h4 className="font-semibold text-base mb-1">✨ Suggested Actions:</h4>
-                <ul className="list-disc pl-5 space-y-1">
-                  {interventions.map((act, i) => (
-                    <li key={i}>{act}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </>
-        ) : !loading && !error ? (
-          <p className="italic text-muted-foreground">
-            Click “Run Prediction” to analyze emotional trends and get actionable suggestions.
-          </p>
-        ) : null}
       </CardContent>
     </Card>
   )
