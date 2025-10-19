@@ -13,52 +13,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ risk: "low_risk" })
     }
 
-    const lowerMsg = message.toLowerCase().trim()
-
-    // 🛑 1. RULE-BASED CHECK (Instant flag)
-    const highRiskKeywords = [
-      "kill myself",
-      "want to die",
-      "end it all",
-      "can't go on",
-      "worthless",
-      "i hate myself",
-      "suicidal",
-      "jump off",
-      "end my life",
-      "kill",
-    ]
-    if (highRiskKeywords.some((kw) => lowerMsg.includes(kw))) {
-      console.log("🚨 High-risk detected by keyword match")
-      return NextResponse.json({ risk: "high_risk" })
-    }
-
-    const mediumRiskKeywords = [
-      "depressed",
-      "sad",
-      "anxious",
-      "tired",
-      "overwhelmed",
-      "hopeless",
-      "hurt",
-      "lonely",
-      "scared",
-      "anxiety",
-    ]
-    if (mediumRiskKeywords.some((kw) => lowerMsg.includes(kw))) {
-      console.log("⚠️ Medium-risk detected by keyword match")
-      return NextResponse.json({ risk: "medium_risk" })
-    }
-
-    // 🧠 2. AI CLASSIFICATION (Backup or nuanced cases)
+    // 🧠 AI CLASSIFICATION PROMPT
     const prompt = `
-Classify this student's message into one of the following categories:
-- "high_risk": signs of suicidal thoughts, self-harm, or severe distress
-- "medium_risk": moderate distress, anxiety, sadness
-- "low_risk": neutral or positive message
+Classify the student's message into one of the following categories:
+- "high_risk": clear or strong signs of suicidal thoughts, self-harm, or extreme distress.
+- "medium_risk": moderate distress, sadness, anxiety, or struggling emotionally.
+- "low_risk": neutral or positive message.
 
-Respond with ONLY one of: high_risk, medium_risk, or low_risk.
-Message: "${message}"
+Respond with ONLY one of these exact values:
+high_risk
+medium_risk
+low_risk
+
+Message:
+"${message}"
 `
 
     const completion = await openai.chat.completions.create({
@@ -68,15 +36,12 @@ Message: "${message}"
       max_tokens: 10,
     })
 
-    const response = completion.choices[0].message?.content?.trim().toLowerCase()
+    const risk = completion.choices[0].message?.content?.trim().toLowerCase()
+    console.log("🤖 AI classification result:", risk)
 
-    console.log("🤖 AI classification result:", response)
-
-    if (response === "high_risk") {
-      return NextResponse.json({ risk: "high_risk" })
-    }
-    if (response === "medium_risk") {
-      return NextResponse.json({ risk: "medium_risk" })
+    if (risk === "high_risk" || risk === "medium_risk") {
+      // 🚨 Auto-redirect if medium or high risk
+      return NextResponse.redirect(new URL(`/support-page-inner?risk=${risk}`, req.url))
     }
 
     return NextResponse.json({ risk: "low_risk" })
